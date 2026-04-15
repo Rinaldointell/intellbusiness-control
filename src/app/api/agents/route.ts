@@ -80,8 +80,12 @@ export async function GET() {
         currentTask: row.current_task ?? null,
         executionsToday: row.executions_today ?? 0,
         lastActivity: row.updated_at ?? null,
-        model: 'claude-sonnet-4-6',
+        model: row.model ?? 'claude-sonnet-4-6',
         activeSessions: row.status === 'busy' ? 1 : 0,
+        workspace: row.workspace ?? '',
+        dmPolicy: row.dm_policy ?? null,
+        allowAgents: Array.isArray(row.allow_agents) ? row.allow_agents : [],
+        botToken: row.bot_token ?? null,
       }
     })
 
@@ -96,6 +100,10 @@ export async function GET() {
         lastActivity: null,
         model: 'claude-sonnet-4-6',
         activeSessions: 0,
+        workspace: '',
+        dmPolicy: null,
+        allowAgents: [],
+        botToken: null,
       }))
       return NextResponse.json({ agents: fallback })
     }
