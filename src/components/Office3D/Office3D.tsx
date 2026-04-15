@@ -2,8 +2,9 @@
 
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Sky, Environment } from '@react-three/drei';
-import { Suspense, useState } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import { Vector3 } from 'three';
+import { createClient } from '@supabase/supabase-js';
 import { AGENTS } from './agentsConfig';
 import type { AgentState } from './agentsConfig';
 import AgentDesk from './AgentDesk';
@@ -19,21 +20,70 @@ import WallClock from './WallClock';
 import FirstPersonControls from './FirstPersonControls';
 import MovingAvatar from './MovingAvatar';
 
+// Map Supabase status to AgentStatus type
+function mapStatus(s: string | null | undefined): AgentState['status'] {
+  if (s === 'busy') return 'working';
+  if (s === 'idle') return 'idle';
+  return 'idle';
+}
+
 export default function Office3D() {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [interactionModal, setInteractionModal] = useState<string | null>(null);
   const [controlMode, setControlMode] = useState<'orbit' | 'fps'>('orbit');
   const [avatarPositions, setAvatarPositions] = useState<Map<string, any>>(new Map());
-  
-  // Mock data - TODO: Replace with real API data
-  const [agentStates] = useState<Record<string, AgentState>>({
-    main: { id: 'main', status: 'working', currentTask: 'Procesando emails', model: 'opus', tokensPerHour: 15000, tasksInQueue: 3, uptime: 12 },
-    academic: { id: 'academic', status: 'idle', model: 'sonnet', tokensPerHour: 0, tasksInQueue: 0, uptime: 8 },
-    studio: { id: 'studio', status: 'thinking', currentTask: 'Generando guión YouTube', model: 'opus', tokensPerHour: 8000, tasksInQueue: 1, uptime: 5 },
-    linkedin: { id: 'linkedin', status: 'working', currentTask: 'Redactando post', model: 'sonnet', tokensPerHour: 5000, tasksInQueue: 2, uptime: 10 },
-    social: { id: 'social', status: 'idle', model: 'sonnet', tokensPerHour: 0, tasksInQueue: 0, uptime: 7 },
-    infra: { id: 'infra', status: 'error', currentTask: 'Failed deployment', model: 'haiku', tokensPerHour: 1000, tasksInQueue: 0, uptime: 15 },
+
+  // Agent states — populated from Supabase
+  const [agentStates, setAgentStates] = useState<Record<string, AgentState>>(() => {
+    const initial: Record<string, AgentState> = {};
+    for (const agent of AGENTS) {
+      initial[agent.id] = { id: agent.id, status: 'idle' };
+    }
+    return initial;
   });
+
+  useEffect(() => {
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    // Initial fetch
+    supabase.from('agents').select('id, status, current_task').then(({ data }) => {
+      if (!data) return;
+      setAgentStates((prev) => {
+        const next = { ...prev };
+        for (const row of data) {
+          next[row.id] = {
+            id: row.id,
+            status: mapStatus(row.status),
+            currentTask: row.current_task ?? undefined,
+            model: 'sonnet',
+          };
+        }
+        return next;
+      });
+    });
+
+    // Realtime subscription
+    const channel = supabase
+      .channel('office3d-agents')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'agents' }, (payload) => {
+        const row = payload.new as { id: string; status: string; current_task: string | null };
+        setAgentStates((prev) => ({
+          ...prev,
+          [row.id]: {
+            id: row.id,
+            status: mapStatus(row.status),
+            currentTask: row.current_task ?? undefined,
+            model: 'sonnet',
+          },
+        }));
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, []);
 
   const handleDeskClick = (agentId: string) => {
     setSelectedAgent(agentId);

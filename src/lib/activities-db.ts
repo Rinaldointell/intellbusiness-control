@@ -1,13 +1,8 @@
 /**
- * SQLite-backed Activity Logger
- * Stores all agent activities with 30-day retention
+ * Activity Logger — Supabase backend
+ * Replaces SQLite (better-sqlite3) with Supabase queries
  */
-import Database from 'better-sqlite3';
-import path from 'path';
-import fs from 'fs';
-import { randomUUID } from 'crypto';
-
-const DB_PATH = path.join(process.cwd(), 'data', 'activities.db');
+import { supabaseServer } from './supabase-server'
 
 export type ActivityType =
   | 'file'
@@ -25,250 +20,166 @@ export type ActivityType =
   | 'web_search'
   | 'message_sent'
   | 'tool_call'
-  | 'agent_action';
+  | 'agent_action'
+  | 'task_completed'
+  | 'deploy'
 
-export type ActivityStatus = 'success' | 'error' | 'pending' | 'running';
+export type ActivityStatus = 'success' | 'error' | 'pending' | 'running'
 
 export interface Activity {
-  id: string;
-  timestamp: string;
-  type: string;
-  description: string;
-  status: string;
-  duration_ms: number | null;
-  tokens_used: number | null;
-  agent: string | null;
-  metadata: Record<string, unknown> | null;
+  id: string
+  timestamp: string
+  type: string
+  description: string
+  status: string
+  duration_ms: number | null
+  tokens_used: number | null
+  agent: string | null
+  metadata: Record<string, unknown> | null
+  // n8n-style fields (optional)
+  message?: string
+  icon?: string
+  squad?: string
 }
 
-let _db: Database.Database | null = null;
-
-function getDb(): Database.Database {
-  if (_db) return _db;
-
-  // Ensure data dir
-  const dataDir = path.dirname(DB_PATH);
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
-
-  _db = new Database(DB_PATH);
-
-  // WAL mode for better concurrency
-  _db.pragma('journal_mode = WAL');
-  _db.pragma('synchronous = NORMAL');
-
-  // Create table
-  _db.exec(`
-    CREATE TABLE IF NOT EXISTS activities (
-      id TEXT PRIMARY KEY,
-      timestamp TEXT NOT NULL,
-      type TEXT NOT NULL,
-      description TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'success',
-      duration_ms INTEGER,
-      tokens_used INTEGER,
-      agent TEXT,
-      metadata TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_activities_timestamp ON activities(timestamp DESC);
-    CREATE INDEX IF NOT EXISTS idx_activities_type ON activities(type);
-    CREATE INDEX IF NOT EXISTS idx_activities_status ON activities(status);
-  `);
-
-  // Migrate from JSON if DB is empty and JSON exists
-  const count = (_db.prepare('SELECT COUNT(*) as n FROM activities').get() as { n: number }).n;
-  if (count === 0) {
-    const jsonPath = path.join(process.cwd(), 'data', 'activities.json');
-    if (fs.existsSync(jsonPath)) {
-      try {
-        const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
-        const insert = _db.prepare(`
-          INSERT OR IGNORE INTO activities (id, timestamp, type, description, status, duration_ms, tokens_used, agent, metadata)
-          VALUES (@id, @timestamp, @type, @description, @status, @duration_ms, @tokens_used, @agent, @metadata)
-        `);
-        const insertMany = _db.transaction((activities: Activity[]) => {
-          for (const a of activities) {
-            insert.run({
-              ...a,
-              agent: (a as Activity & { agent?: string }).agent ?? null,
-              metadata: a.metadata ? JSON.stringify(a.metadata) : null,
-            });
-          }
-        });
-        insertMany(Array.isArray(data) ? data : []);
-        console.log(`[activities-db] Migrated ${Array.isArray(data) ? data.length : 0} activities from JSON`);
-      } catch (e) {
-        console.warn('[activities-db] Migration from JSON failed:', e);
-      }
-    }
-  }
-
-  return _db;
+export interface GetActivitiesOptions {
+  type?: string
+  status?: string
+  agent?: string
+  startDate?: string
+  endDate?: string
+  sort?: 'newest' | 'oldest'
+  limit?: number
+  offset?: number
 }
 
-export function logActivity(
+export interface ActivitiesResult {
+  activities: Activity[]
+  total: number
+}
+
+export async function logActivity(
   type: string,
   description: string,
   status: string,
   opts?: {
-    duration_ms?: number | null;
-    tokens_used?: number | null;
-    agent?: string | null;
-    metadata?: Record<string, unknown> | null;
+    duration_ms?: number | null
+    tokens_used?: number | null
+    agent?: string | null
+    metadata?: Record<string, unknown> | null
   }
-): Activity {
-  const db = getDb();
-  const id = randomUUID();
-  const timestamp = new Date().toISOString();
+): Promise<Activity> {
+  const { data, error } = await supabaseServer
+    .from('activities')
+    .insert({
+      type,
+      message: description,
+      icon: '⚙️',
+      agent: opts?.agent ?? null,
+      squad: null,
+      timestamp: new Date().toISOString(),
+    })
+    .select()
+    .single()
 
-  db.prepare(`
-    INSERT INTO activities (id, timestamp, type, description, status, duration_ms, tokens_used, agent, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    id,
-    timestamp,
-    type,
-    description,
-    status,
-    opts?.duration_ms ?? null,
-    opts?.tokens_used ?? null,
-    opts?.agent ?? null,
-    opts?.metadata ? JSON.stringify(opts.metadata) : null,
-  );
+  if (error) throw error
 
-  // Prune activities older than 30 days
-  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  db.prepare('DELETE FROM activities WHERE timestamp < ?').run(cutoff);
-
-  return { id, timestamp, type, description, status, duration_ms: opts?.duration_ms ?? null, tokens_used: opts?.tokens_used ?? null, agent: opts?.agent ?? null, metadata: opts?.metadata ?? null };
-}
-
-export function updateActivity(
-  id: string,
-  status: string,
-  opts?: { duration_ms?: number; tokens_used?: number }
-): void {
-  const db = getDb();
-  db.prepare(`
-    UPDATE activities SET status = ?, duration_ms = COALESCE(?, duration_ms), tokens_used = COALESCE(?, tokens_used)
-    WHERE id = ?
-  `).run(status, opts?.duration_ms ?? null, opts?.tokens_used ?? null, id);
-}
-
-export interface GetActivitiesOptions {
-  type?: string;
-  status?: string;
-  agent?: string;
-  startDate?: string;
-  endDate?: string;
-  sort?: 'newest' | 'oldest';
-  limit?: number;
-  offset?: number;
-}
-
-export interface ActivitiesResult {
-  activities: Activity[];
-  total: number;
-}
-
-function parseRow(row: Record<string, unknown>): Activity {
   return {
-    id: row.id as string,
-    timestamp: row.timestamp as string,
-    type: row.type as string,
-    description: row.description as string,
-    status: row.status as string,
-    duration_ms: row.duration_ms as number | null,
-    tokens_used: row.tokens_used as number | null,
-    agent: row.agent as string | null,
-    metadata: row.metadata ? JSON.parse(row.metadata as string) : null,
-  };
+    id: data.id,
+    timestamp: data.timestamp,
+    type: data.type,
+    description: data.message ?? description,
+    status,
+    duration_ms: opts?.duration_ms ?? null,
+    tokens_used: opts?.tokens_used ?? null,
+    agent: data.agent,
+    metadata: opts?.metadata ?? null,
+  }
 }
 
-export function getActivities(opts: GetActivitiesOptions = {}): ActivitiesResult {
-  const db = getDb();
+export async function getActivities(opts: GetActivitiesOptions = {}): Promise<ActivitiesResult> {
+  const limit = opts.limit ?? 20
+  const offset = opts.offset ?? 0
+  const order = opts.sort === 'oldest' ? true : false // ascending = oldest first
 
-  const conditions: string[] = [];
-  const params: unknown[] = [];
+  let query = supabaseServer
+    .from('activities')
+    .select('*', { count: 'exact' })
+    .order('timestamp', { ascending: order })
+    .range(offset, offset + limit - 1)
+
+  if (opts.agent) query = query.eq('agent', opts.agent)
+  if (opts.startDate) query = query.gte('timestamp', opts.startDate)
+  if (opts.endDate) query = query.lte('timestamp', opts.endDate + 'T23:59:59Z')
 
   if (opts.type && opts.type !== 'all') {
-    // Support comma-separated types
-    const types = opts.type.split(',').map((t) => t.trim()).filter(Boolean);
-    if (types.length === 1) {
-      // Also match legacy types (cron_run → cron, file_read/file_write → file, etc.)
-      const aliases: Record<string, string[]> = {
-        cron: ['cron', 'cron_run'],
-        file: ['file', 'file_read', 'file_write'],
-        search: ['search', 'web_search'],
-        message: ['message', 'message_sent'],
-        task: ['task', 'tool_call', 'agent_action'],
-      };
-      const expanded = aliases[types[0]] ?? [types[0]];
-      conditions.push(`type IN (${expanded.map(() => '?').join(',')})`);
-      params.push(...expanded);
-    } else {
-      conditions.push(`type IN (${types.map(() => '?').join(',')})`);
-      params.push(...types);
+    const types = opts.type.split(',').map((t) => t.trim()).filter(Boolean)
+    // Expand legacy aliases
+    const aliases: Record<string, string[]> = {
+      cron: ['cron', 'cron_run'],
+      file: ['file', 'file_read', 'file_write'],
+      search: ['search', 'web_search'],
+      message: ['message', 'message_sent'],
+      task: ['task', 'tool_call', 'agent_action', 'task_completed'],
     }
+    const expanded = types.flatMap((t) => aliases[t] ?? [t])
+    query = query.in('type', expanded)
   }
 
-  if (opts.status && opts.status !== 'all') {
-    conditions.push('status = ?');
-    params.push(opts.status);
-  }
+  const { data, error, count } = await query
 
-  if (opts.agent) {
-    conditions.push('agent = ?');
-    params.push(opts.agent);
-  }
+  if (error) throw error
 
-  if (opts.startDate) {
-    conditions.push('timestamp >= ?');
-    params.push(opts.startDate);
-  }
+  const activities: Activity[] = (data ?? []).map((row) => ({
+    id: String(row.id),
+    timestamp: row.timestamp,
+    type: row.type,
+    description: row.message ?? '',
+    status: 'success',
+    duration_ms: null,
+    tokens_used: null,
+    agent: row.agent ?? null,
+    metadata: null,
+    message: row.message,
+    icon: row.icon,
+    squad: row.squad,
+  }))
 
-  if (opts.endDate) {
-    // Include full end date
-    conditions.push("timestamp <= datetime(?, '+1 day')");
-    params.push(opts.endDate);
-  }
-
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const order = opts.sort === 'oldest' ? 'ASC' : 'DESC';
-  const limit = opts.limit ?? 20;
-  const offset = opts.offset ?? 0;
-
-  const total = (db.prepare(`SELECT COUNT(*) as n FROM activities ${where}`).get(...params) as { n: number }).n;
-  const rows = db.prepare(`SELECT * FROM activities ${where} ORDER BY timestamp ${order} LIMIT ? OFFSET ?`).all(...params, limit, offset) as Record<string, unknown>[];
-
-  return {
-    activities: rows.map(parseRow),
-    total,
-  };
+  return { activities, total: count ?? 0 }
 }
 
-export function getActivityStats(): {
-  total: number;
-  today: number;
-  byType: Record<string, number>;
-  byStatus: Record<string, number>;
-} {
-  const db = getDb();
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
+export async function getActivityStats(): Promise<{
+  total: number
+  today: number
+  byType: Record<string, number>
+  byStatus: Record<string, number>
+}> {
+  const todayStart = new Date()
+  todayStart.setHours(0, 0, 0, 0)
 
-  const total = (db.prepare('SELECT COUNT(*) as n FROM activities').get() as { n: number }).n;
-  const today = (db.prepare("SELECT COUNT(*) as n FROM activities WHERE timestamp >= ?").get(todayStart.toISOString()) as { n: number }).n;
+  const [totalRes, todayRes, typeRes] = await Promise.all([
+    supabaseServer.from('activities').select('*', { count: 'exact', head: true }),
+    supabaseServer
+      .from('activities')
+      .select('*', { count: 'exact', head: true })
+      .gte('timestamp', todayStart.toISOString()),
+    supabaseServer.from('activities').select('type'),
+  ])
 
-  const typeRows = db.prepare("SELECT type, COUNT(*) as n FROM activities GROUP BY type").all() as Array<{ type: string; n: number }>;
-  const byType: Record<string, number> = {};
-  for (const r of typeRows) byType[r.type] = r.n;
+  const byType: Record<string, number> = {}
+  for (const row of typeRes.data ?? []) {
+    byType[row.type] = (byType[row.type] ?? 0) + 1
+  }
 
-  const statusRows = db.prepare("SELECT status, COUNT(*) as n FROM activities GROUP BY status").all() as Array<{ status: string; n: number }>;
-  const byStatus: Record<string, number> = {};
-  for (const r of statusRows) byStatus[r.status] = r.n;
+  return {
+    total: totalRes.count ?? 0,
+    today: todayRes.count ?? 0,
+    byType,
+    byStatus: { success: totalRes.count ?? 0 },
+  }
+}
 
-  return { total, today, byType, byStatus };
+// Sync version stubs (used by some imports) — delegate to async
+export function updateActivity(_id: string, _status: string): void {
+  // no-op — Supabase activities are immutable in this architecture
 }

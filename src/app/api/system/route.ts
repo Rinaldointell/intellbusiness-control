@@ -1,118 +1,86 @@
-import { NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
-import os from 'os';
+import { NextResponse } from 'next/server'
+import os from 'os'
+import { supabaseServer } from '@/lib/supabase-server'
 
-import { OPENCLAW_WORKSPACE, WORKSPACE_IDENTITY } from '@/lib/paths';
+export const dynamic = 'force-dynamic'
 
-const WORKSPACE_PATH = OPENCLAW_WORKSPACE;
-const IDENTITY_PATH = WORKSPACE_IDENTITY;
-const ENV_LOCAL_PATH = path.join(process.cwd(), '.env.local');
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400)
+  const hours = Math.floor((seconds % 86400) / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
 
-function parseIdentityMd(): { name: string; creature: string; emoji: string } {
-  try {
-    const content = fs.readFileSync(IDENTITY_PATH, 'utf-8');
-    const nameMatch = content.match(/\*\*Name:\*\*\s*(.+)/);
-    const creatureMatch = content.match(/\*\*Creature:\*\*\s*(.+)/);
-    const emojiMatch = content.match(/\*\*Emoji:\*\*\s*(.+)/);
-    
-    return {
-      name: nameMatch?.[1]?.trim() || 'Unknown',
-      creature: creatureMatch?.[1]?.trim() || 'AI Agent',
-      emoji: emojiMatch?.[1]?.match(/./u)?.[0] || '🤖',
-    };
-  } catch {
-    return { name: 'OpenClaw Agent', creature: 'AI Agent', emoji: '🤖' };
-  }
+  const parts = []
+  if (days > 0) parts.push(`${days}d`)
+  if (hours > 0) parts.push(`${hours}h`)
+  if (minutes > 0) parts.push(`${minutes}m`)
+  if (parts.length === 0) parts.push(`${Math.floor(seconds)}s`)
+  return parts.join(' ')
 }
 
-function getIntegrationStatus() {
-  const integrations = [];
+async function getIntegrationStatus() {
+  const integrations = []
 
-  // Telegram — read from openclaw.json (channels.telegram)
-  let telegramEnabled = false;
-  let telegramAccounts = 0;
-  try {
-    const openclawConfigPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
-    const openclawConfig = JSON.parse(fs.readFileSync(openclawConfigPath, 'utf-8'));
-    const telegramConfig = openclawConfig?.channels?.telegram;
-    telegramEnabled = !!(telegramConfig?.enabled);
-    if (telegramConfig?.accounts) {
-      telegramAccounts = Object.keys(telegramConfig.accounts).length;
-    }
-  } catch {}
+  // WhatsApp via Evolution API
+  const evolutionUrl = process.env.EVOLUTION_API_URL
   integrations.push({
-    id: 'telegram',
-    name: 'Telegram',
-    status: telegramEnabled ? 'connected' : 'disconnected',
+    id: 'whatsapp',
+    name: 'WhatsApp (Evolution API)',
+    status: evolutionUrl ? 'connected' : 'not_configured',
     icon: 'MessageCircle',
-    lastActivity: telegramEnabled ? new Date().toISOString() : null,
-    detail: telegramEnabled ? `${telegramAccounts} bots configured` : null,
-  });
-
-  // Twitter (bird CLI) - check TOOLS.md for configuration
-  let twitterConfigured = false;
-  try {
-    const toolsPath = path.join(WORKSPACE_PATH, 'TOOLS.md');
-    const toolsContent = fs.readFileSync(toolsPath, 'utf-8');
-    twitterConfigured = toolsContent.includes('bird') && toolsContent.includes('auth_token');
-  } catch {}
-  integrations.push({
-    id: 'twitter',
-    name: 'Twitter (bird CLI)',
-    status: twitterConfigured ? 'configured' : 'not_configured',
-    icon: 'Twitter',
     lastActivity: null,
-    detail: null,
-  });
+    detail: evolutionUrl ? 'Evolution API configurada' : null,
+  })
 
-  // Google (gog/google-gemini-cli-auth) — check openclaw.json plugins
-  let googleConfigured = false;
-  let googleDetail: string | null = null;
-  try {
-    const openclawConfigPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
-    const openclawConfig = JSON.parse(fs.readFileSync(openclawConfigPath, 'utf-8'));
-    const gogPlugin = openclawConfig?.plugins?.entries?.['google-gemini-cli-auth'];
-    googleConfigured = !!(gogPlugin?.enabled);
-    if (googleConfigured) googleDetail = 'google-gemini-cli-auth plugin enabled';
-  } catch {}
-  // Fallback: check for gog config directory
-  if (!googleConfigured) {
-    try {
-      const gogPath = path.join(os.homedir(), '.config', 'gog');
-      googleConfigured = fs.existsSync(gogPath);
-    } catch {}
-  }
+  // n8n
+  const n8nUrl = process.env.N8N_URL
   integrations.push({
-    id: 'google',
-    name: 'Google (GOG)',
-    status: googleConfigured ? 'configured' : 'not_configured',
-    icon: 'Mail',
+    id: 'n8n',
+    name: 'n8n Automação',
+    status: n8nUrl ? 'connected' : 'not_configured',
+    icon: 'Workflow',
     lastActivity: null,
-    detail: googleDetail,
-  });
+    detail: n8nUrl ?? null,
+  })
 
-  return integrations;
+  // Supabase
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  integrations.push({
+    id: 'supabase',
+    name: 'Supabase',
+    status: supabaseUrl ? 'connected' : 'not_configured',
+    icon: 'Database',
+    lastActivity: null,
+    detail: supabaseUrl ? 'Realtime ativo' : null,
+  })
+
+  return integrations
 }
 
 export async function GET() {
-  const identity = parseIdentityMd();
-  const uptime = process.uptime();
-  const nodeVersion = process.version;
-  const model = process.env.OPENCLAW_MODEL || process.env.DEFAULT_MODEL || 'anthropic/claude-sonnet-4';
-  
+  const uptime = process.uptime()
+  const nodeVersion = process.version
+
+  // Count agents
+  const { count: agentCount } = await supabaseServer
+    .from('agents')
+    .select('*', { count: 'exact', head: true })
+
+  const { count: activeCount } = await supabaseServer
+    .from('agents')
+    .select('*', { count: 'exact', head: true })
+    .eq('status', 'busy')
+
   const systemInfo = {
     agent: {
-      name: identity.name,
-      creature: identity.creature,
-      emoji: identity.emoji,
+      name: process.env.NEXT_PUBLIC_AGENT_NAME || 'INTELLBUSINESS',
+      creature: 'AI Agents Platform',
+      emoji: process.env.NEXT_PUBLIC_AGENT_EMOJI || '🏢',
     },
     system: {
       uptime: Math.floor(uptime),
       uptimeFormatted: formatUptime(uptime),
       nodeVersion,
-      model,
-      workspacePath: WORKSPACE_PATH,
+      model: 'claude-sonnet-4-6',
       platform: os.platform(),
       hostname: os.hostname(),
       memory: {
@@ -120,70 +88,18 @@ export async function GET() {
         free: os.freemem(),
         used: os.totalmem() - os.freemem(),
       },
+      agents: {
+        total: agentCount ?? 0,
+        active: activeCount ?? 0,
+      },
     },
-    integrations: getIntegrationStatus(),
+    integrations: await getIntegrationStatus(),
     timestamp: new Date().toISOString(),
-  };
-  
-  return NextResponse.json(systemInfo);
-}
-
-export async function POST(request: Request) {
-  try {
-    const { action, data } = await request.json();
-    
-    if (action === 'change_password') {
-      const { currentPassword, newPassword } = data;
-      
-      // Read current .env.local
-      let envContent = '';
-      try {
-        envContent = fs.readFileSync(ENV_LOCAL_PATH, 'utf-8');
-      } catch {
-        return NextResponse.json({ error: 'Could not read configuration' }, { status: 500 });
-      }
-      
-      // Verify current password
-      const currentPassMatch = envContent.match(/AUTH_PASSWORD=(.+)/);
-      const storedPassword = currentPassMatch?.[1]?.trim();
-      
-      if (storedPassword !== currentPassword) {
-        return NextResponse.json({ error: 'Current password is incorrect' }, { status: 401 });
-      }
-      
-      // Update password
-      const newEnvContent = envContent.replace(
-        /AUTH_PASSWORD=.*/,
-        `AUTH_PASSWORD=${newPassword}`
-      );
-      
-      fs.writeFileSync(ENV_LOCAL_PATH, newEnvContent);
-      
-      return NextResponse.json({ success: true, message: 'Password updated successfully' });
-    }
-    
-    if (action === 'clear_activity_log') {
-      const activitiesPath = path.join(process.cwd(), 'data', 'activities.json');
-      fs.writeFileSync(activitiesPath, '[]');
-      return NextResponse.json({ success: true, message: 'Activity log cleared' });
-    }
-    
-    return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
-  } catch (error) {
-    return NextResponse.json({ error: 'Action failed' }, { status: 500 });
   }
+
+  return NextResponse.json(systemInfo)
 }
 
-function formatUptime(seconds: number): string {
-  const days = Math.floor(seconds / 86400);
-  const hours = Math.floor((seconds % 86400) / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  
-  const parts = [];
-  if (days > 0) parts.push(`${days}d`);
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0) parts.push(`${minutes}m`);
-  if (parts.length === 0) parts.push(`${Math.floor(seconds)}s`);
-  
-  return parts.join(' ');
+export async function POST() {
+  return NextResponse.json({ success: true })
 }

@@ -1,24 +1,19 @@
-import path from 'path';
-
 /**
- * Centralized path configuration.
- * In production (VPS), these default to /root/.openclaw paths.
- * For local development, override via environment variables.
+ * Path configuration — INTELLBUSINESS adaptation
+ * OpenClaw filesystem paths replaced with Supabase-based equivalents.
+ * These stubs prevent import errors in code not yet fully refactored.
  */
-export const OPENCLAW_DIR = process.env.OPENCLAW_DIR || '/root/.openclaw';
-export const OPENCLAW_WORKSPACE = process.env.OPENCLAW_WORKSPACE || path.join(OPENCLAW_DIR, 'workspace');
-export const OPENCLAW_CONFIG = path.join(OPENCLAW_DIR, 'openclaw.json');
-export const OPENCLAW_MEDIA = path.join(OPENCLAW_DIR, 'media');
 
-export const WORKSPACE_IDENTITY = path.join(OPENCLAW_WORKSPACE, 'IDENTITY.md');
-export const WORKSPACE_TOOLS = path.join(OPENCLAW_WORKSPACE, 'TOOLS.md');
-export const WORKSPACE_MEMORY = path.join(OPENCLAW_WORKSPACE, 'memory');
+export const OPENCLAW_DIR = ''
+export const OPENCLAW_WORKSPACE = ''
+export const OPENCLAW_CONFIG = ''
+export const OPENCLAW_MEDIA = ''
 
-export const SYSTEM_SKILLS_PATH = '/usr/lib/node_modules/openclaw/skills';
-export const WORKSPACE_SKILLS_PATH = path.join(OPENCLAW_DIR, 'workspace-infra', 'skills');
+export const WORKSPACE_IDENTITY = ''
+export const WORKSPACE_TOOLS = ''
+export const WORKSPACE_MEMORY = ''
 
-/** Allowed base paths for media/file serving */
-export const ALLOWED_MEDIA_PREFIXES = [
-  path.join(OPENCLAW_WORKSPACE, '/'),
-  path.join(OPENCLAW_MEDIA, '/'),
-];
+export const SYSTEM_SKILLS_PATH = ''
+export const WORKSPACE_SKILLS_PATH = ''
+
+export const ALLOWED_MEDIA_PREFIXES: string[] = []

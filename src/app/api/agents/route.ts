@@ -1,147 +1,108 @@
-import { NextResponse } from "next/server";
-import { readFileSync } from "fs";
-import { join } from "path";
+import { NextResponse } from 'next/server'
+import { supabaseServer } from '@/lib/supabase-server'
 
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic'
 
-interface Agent {
-  id: string;
-  name?: string;
-  emoji: string;
-  color: string;
-  model: string;
-  workspace: string;
-  dmPolicy?: string;
-  allowAgents?: string[];
-  allowAgentsDetails?: Array<{
-    id: string;
-    name: string;
-    emoji: string;
-    color: string;
-  }>;
-  botToken?: string;
-  status: "online" | "offline";
-  lastActivity?: string;
-  activeSessions: number;
-}
-
-// Fallback config used when an agent doesn't define its own ui config in openclaw.json.
-// The main agent reads name/emoji from env vars; all others fall back to generic defaults.
-// Override via each agent's openclaw.json → ui.emoji / ui.color / name fields.
-const DEFAULT_AGENT_CONFIG: Record<string, { emoji: string; color: string; name?: string }> = {
-  main: {
-    emoji: process.env.NEXT_PUBLIC_AGENT_EMOJI || "🤖",
-    color: "#ff6b35",
-    name: process.env.NEXT_PUBLIC_AGENT_NAME || "Mission Control",
+// Static metadata for INTELLBUSINESS agents
+// Matches agentsConfig used in the 3D Office
+const AGENT_META: Record<string, { name: string; emoji: string; color: string; role: string; squad: string }> = {
+  'isabella': {
+    name: 'Isabella',
+    emoji: '💬',
+    color: '#7c3aed',
+    role: 'Agente WhatsApp',
+    squad: 'whatsapp-agents',
   },
-};
-
-/**
- * Get agent display info (emoji, color, name) from openclaw.json or defaults
- */
-function getAgentDisplayInfo(agentId: string, agentConfig: any): { emoji: string; color: string; name: string } {
-  // First try to get from agent's own config in openclaw.json
-  const configEmoji = agentConfig?.ui?.emoji;
-  const configColor = agentConfig?.ui?.color;
-  const configName = agentConfig?.name;
-
-  // Then try defaults
-  const defaults = DEFAULT_AGENT_CONFIG[agentId];
-
-  return {
-    emoji: configEmoji || defaults?.emoji || "🤖",
-    color: configColor || defaults?.color || "#666666",
-    name: configName || defaults?.name || agentId,
-  };
+  'sarah-lynn': {
+    name: 'Sarah Lynn',
+    emoji: '🤝',
+    color: '#a855f7',
+    role: 'Atendimento',
+    squad: 'whatsapp-agents',
+  },
+  'samantha': {
+    name: 'Samantha',
+    emoji: '📋',
+    color: '#c084fc',
+    role: 'Coordenadora',
+    squad: 'whatsapp-agents',
+  },
+  'brand-strategist': {
+    name: 'Brand Strategist',
+    emoji: '🎯',
+    color: '#f59e0b',
+    role: 'Estratégia de Marca',
+    squad: 'branding-design',
+  },
+  'visual-designer': {
+    name: 'Visual Designer',
+    emoji: '🎨',
+    color: '#10b981',
+    role: 'Design Visual',
+    squad: 'branding-design',
+  },
+  'ux-architect': {
+    name: 'UX Architect',
+    emoji: '🏗️',
+    color: '#3b82f6',
+    role: 'Arquitetura UX',
+    squad: 'branding-design',
+  },
 }
 
 export async function GET() {
   try {
-    // Read openclaw config
-    const configPath = (process.env.OPENCLAW_DIR || "/root/.openclaw") + "/openclaw.json";
-    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    const { data, error } = await supabaseServer
+      .from('agents')
+      .select('*')
+      .order('id')
 
-    // Get agents from config
-    const agents: Agent[] = config.agents.list.map((agent: any) => {
-      const agentInfo = getAgentDisplayInfo(agent.id, agent);
+    if (error) throw error
 
-      // Get telegram account info
-      const telegramAccount =
-        config.channels?.telegram?.accounts?.[agent.id];
-      const botToken = telegramAccount?.botToken;
-
-      // Check if agent has recent activity
-      const memoryPath = join(agent.workspace, "memory");
-      let lastActivity = undefined;
-      let status: "online" | "offline" = "offline";
-
-      try {
-        const today = new Date().toISOString().split("T")[0];
-        const memoryFile = join(memoryPath, `${today}.md`);
-        const stat = require("fs").statSync(memoryFile);
-        lastActivity = stat.mtime.toISOString();
-        // Consider online if activity within last 5 minutes
-        status =
-          Date.now() - stat.mtime.getTime() < 5 * 60 * 1000
-            ? "online"
-            : "offline";
-      } catch (e) {
-        // No recent activity
+    // Merge DB status with static metadata
+    const agents = (data ?? []).map((row) => {
+      const meta = AGENT_META[row.id] ?? {
+        name: row.id,
+        emoji: '🤖',
+        color: '#6b7280',
+        role: 'Agente',
+        squad: row.squad ?? 'general',
       }
 
-      // Get details of allowed subagents
-      const allowAgents = agent.subagents?.allowAgents || [];
-      const allowAgentsDetails = allowAgents.map((subagentId: string) => {
-        // Find subagent in config
-        const subagentConfig = config.agents.list.find(
-          (a: any) => a.id === subagentId
-        );
-        if (subagentConfig) {
-          const subagentInfo = getAgentDisplayInfo(subagentId, subagentConfig);
-          return {
-            id: subagentId,
-            name: subagentConfig.name || subagentInfo.name,
-            emoji: subagentInfo.emoji,
-            color: subagentInfo.color,
-          };
-        }
-        // Fallback if subagent not found in config
-        const fallbackInfo = getAgentDisplayInfo(subagentId, null);
-        return {
-          id: subagentId,
-          name: fallbackInfo.name,
-          emoji: fallbackInfo.emoji,
-          color: fallbackInfo.color,
-        };
-      });
-
       return {
-        id: agent.id,
-        name: agent.name || agentInfo.name,
-        emoji: agentInfo.emoji,
-        color: agentInfo.color,
-        model:
-          agent.model?.primary || config.agents.defaults.model.primary,
-        workspace: agent.workspace,
-        dmPolicy:
-          telegramAccount?.dmPolicy ||
-          config.channels?.telegram?.dmPolicy ||
-          "pairing",
-        allowAgents,
-        allowAgentsDetails,
-        botToken: botToken ? "configured" : undefined,
-        status,
-        lastActivity,
-        activeSessions: 0, // TODO: get from sessions API
-      };
-    });
+        id: row.id,
+        name: meta.name,
+        emoji: meta.emoji,
+        color: meta.color,
+        role: meta.role,
+        squad: row.squad ?? meta.squad,
+        status: row.status ?? 'offline',
+        currentTask: row.current_task ?? null,
+        executionsToday: row.executions_today ?? 0,
+        lastActivity: row.updated_at ?? null,
+        model: 'claude-sonnet-4-6',
+        activeSessions: row.status === 'busy' ? 1 : 0,
+      }
+    })
 
-    return NextResponse.json({ agents });
+    // If Supabase table is empty, return static list as offline
+    if (agents.length === 0) {
+      const fallback = Object.entries(AGENT_META).map(([id, meta]) => ({
+        id,
+        ...meta,
+        status: 'offline',
+        currentTask: null,
+        executionsToday: 0,
+        lastActivity: null,
+        model: 'claude-sonnet-4-6',
+        activeSessions: 0,
+      }))
+      return NextResponse.json({ agents: fallback })
+    }
+
+    return NextResponse.json({ agents })
   } catch (error) {
-    console.error("Error reading agents:", error);
-    return NextResponse.json(
-      { error: "Failed to load agents" },
-      { status: 500 }
-    );
+    console.error('Error reading agents:', error)
+    return NextResponse.json({ error: 'Failed to load agents' }, { status: 500 })
   }
 }

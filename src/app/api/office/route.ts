@@ -1,228 +1,70 @@
-import { NextResponse } from "next/server";
-import { readFileSync, statSync, readdirSync } from "fs";
-import { join } from "path";
+import { NextResponse } from 'next/server'
+import { supabaseServer } from '@/lib/supabase-server'
 
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic'
 
-const AGENT_CONFIG = {
-  main: { emoji: "🦞", color: "#ff6b35", name: "Tenacitas", role: "Boss" },
-  academic: {
-    emoji: "🎓",
-    color: "#4ade80",
-    name: "Profe",
-    role: "Teacher",
-  },
-  infra: {
-    emoji: "🔧",
-    color: "#f97316",
-    name: "Infra",
-    role: "DevOps",
-  },
-  studio: {
-    emoji: "🎬",
-    color: "#a855f7",
-    name: "Studio",
-    role: "Video Editor",
-  },
-  social: {
-    emoji: "📱",
-    color: "#ec4899",
-    name: "Social",
-    role: "Social Media",
-  },
-  linkedin: {
-    emoji: "💼",
-    color: "#0077b5",
-    name: "LinkedIn Pro",
-    role: "Professional",
-  },
-  devclaw: {
-    emoji: "👨‍💻",
-    color: "#8b5cf6",
-    name: "DevClaw",
-    role: "Developer",
-  },
-  freelance: {
-    emoji: "👨‍💻",
-    color: "#8b5cf6",
-    name: "DevClaw",
-    role: "Developer",
-  },
-};
-
-interface AgentSession {
-  agentId: string;
-  sessionId: string;
-  label?: string;
-  lastActivity?: string;
-  createdAt?: string;
-}
-
-async function getAgentStatusFromGateway(): Promise<
-  Record<string, { isActive: boolean; currentTask: string; lastSeen: number }>
-> {
-  try {
-    const configPath = (process.env.OPENCLAW_DIR || "/root/.openclaw") + "/openclaw.json";
-    const config = JSON.parse(readFileSync(configPath, "utf-8"));
-    const gatewayToken = config.gateway?.auth?.token;
-
-    if (!gatewayToken) {
-      console.warn("No gateway token found");
-      return {};
-    }
-
-    // Try to fetch sessions from gateway
-    const response = await fetch("http://localhost:18789/api/sessions", {
-      headers: {
-        Authorization: `Bearer ${gatewayToken}`,
-      },
-      signal: AbortSignal.timeout(2000), // 2s timeout
-    });
-
-    if (!response.ok) {
-      console.warn("Gateway returned non-OK status:", response.status);
-      return {};
-    }
-
-    // Verify Content-Type before parsing JSON
-    const contentType = response.headers.get("content-type");
-    if (!contentType || !contentType.includes("application/json")) {
-      console.warn("Gateway returned non-JSON response:", contentType);
-      return {};
-    }
-
-    const sessions = (await response.json()) as AgentSession[];
-    const agentStatus: Record<
-      string,
-      { isActive: boolean; currentTask: string; lastSeen: number }
-    > = {};
-
-    for (const session of sessions) {
-      if (!session.agentId) continue;
-
-      const lastActivity = session.lastActivity
-        ? new Date(session.lastActivity).getTime()
-        : 0;
-      const now = Date.now();
-      const minutesAgo = (now - lastActivity) / 1000 / 60;
-
-      let status = "SLEEPING";
-      let currentTask = "zzZ...";
-
-      if (minutesAgo < 5) {
-        status = "ACTIVE";
-        currentTask = session.label || "Working on task...";
-      } else if (minutesAgo < 30) {
-        status = "IDLE";
-        currentTask = session.label || "Idle...";
-      }
-
-      // Keep most recent activity per agent
-      if (
-        !agentStatus[session.agentId] ||
-        lastActivity > agentStatus[session.agentId].lastSeen
-      ) {
-        agentStatus[session.agentId] = {
-          isActive: status === "ACTIVE",
-          currentTask: `${status}: ${currentTask}`,
-          lastSeen: lastActivity,
-        };
-      }
-    }
-
-    return agentStatus;
-  } catch (error) {
-    console.warn("Failed to fetch from gateway:", error);
-    return {};
-  }
-}
-
-function getAgentStatusFromFiles(
-  agentId: string,
-  workspace: string
-): { isActive: boolean; currentTask: string; lastSeen: number } {
-  try {
-    const today = new Date().toISOString().split("T")[0];
-    const memoryFile = join(workspace, "memory", `${today}.md`);
-
-    // Check if file exists
-    const stat = statSync(memoryFile);
-    const lastSeen = stat.mtime.getTime();
-    const minutesSinceUpdate = (Date.now() - lastSeen) / 1000 / 60;
-
-    const content = readFileSync(memoryFile, "utf-8");
-    const lines = content.trim().split("\n").filter((l) => l.trim());
-
-    let currentTask = "Idle...";
-    if (lines.length > 0) {
-      // Get last meaningful line (skip timestamps)
-      const lastLine = lines
-        .slice(-10)
-        .reverse()
-        .find((l) => l.length > 20 && !l.match(/^#+\s/));
-
-      if (lastLine) {
-        currentTask = lastLine.replace(/^[-*]\s*/, "").slice(0, 100);
-        if (lastLine.length > 100) currentTask += "...";
-      }
-    }
-
-    // Determine status based on file modification time
-    if (minutesSinceUpdate < 5) {
-      return { isActive: true, currentTask: `ACTIVE: ${currentTask}`, lastSeen };
-    } else if (minutesSinceUpdate < 30) {
-      return { isActive: false, currentTask: `IDLE: ${currentTask}`, lastSeen };
-    } else {
-      return { isActive: false, currentTask: "SLEEPING: zzZ...", lastSeen };
-    }
-  } catch (error) {
-    // No memory file or error reading
-    return { isActive: false, currentTask: "SLEEPING: zzZ...", lastSeen: 0 };
-  }
+const AGENT_META: Record<string, { emoji: string; color: string; name: string; role: string }> = {
+  'isabella':         { emoji: '💬', color: '#7c3aed', name: 'Isabella',         role: 'Agente WhatsApp' },
+  'sarah-lynn':       { emoji: '🤝', color: '#a855f7', name: 'Sarah Lynn',       role: 'Atendimento' },
+  'samantha':         { emoji: '📋', color: '#c084fc', name: 'Samantha',         role: 'Coordenadora' },
+  'brand-strategist': { emoji: '🎯', color: '#f59e0b', name: 'Brand Strategist', role: 'Estratégia de Marca' },
+  'visual-designer':  { emoji: '🎨', color: '#10b981', name: 'Visual Designer',  role: 'Design Visual' },
+  'ux-architect':     { emoji: '🏗️', color: '#3b82f6', name: 'UX Architect',     role: 'Arquitetura UX' },
 }
 
 export async function GET() {
   try {
-    const configPath = (process.env.OPENCLAW_DIR || "/root/.openclaw") + "/openclaw.json";
-    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    const { data, error } = await supabaseServer
+      .from('agents')
+      .select('id, status, current_task, updated_at, squad')
 
-    // Try gateway first, fallback to file-based
-    const gatewayStatus = await getAgentStatusFromGateway();
+    if (error) throw error
 
-    const agents = config.agents.list.map((agent: any) => {
-      const agentInfo = AGENT_CONFIG[agent.id as keyof typeof AGENT_CONFIG] || {
-        emoji: "🤖",
-        color: "#666",
-        name: agent.name || agent.id,
-        role: "Agent",
-      };
-
-      // Get status from gateway, or fallback to files
-      let status = gatewayStatus[agent.id];
-      if (!status) {
-        status = getAgentStatusFromFiles(agent.id, agent.workspace);
+    const agents = (data ?? []).map((row) => {
+      const meta = AGENT_META[row.id] ?? {
+        emoji: '🤖',
+        color: '#6b7280',
+        name: row.id,
+        role: 'Agente',
       }
 
-      // Map freelance -> devclaw for canvas compatibility
-      const canvasId = agent.id === "freelance" ? "devclaw" : agent.id;
+      const isActive = row.status === 'busy'
+      let currentTask = 'zzZ...'
+      if (row.status === 'busy' && row.current_task) {
+        currentTask = `ATIVO: ${row.current_task}`
+      } else if (row.status === 'idle') {
+        currentTask = 'IDLE: Aguardando...'
+      }
 
       return {
-        id: canvasId,
-        name: agentInfo.name,
-        emoji: agentInfo.emoji,
-        color: agentInfo.color,
-        role: agentInfo.role,
-        currentTask: status.currentTask,
-        isActive: status.isActive,
-      };
-    });
+        id: row.id,
+        name: meta.name,
+        emoji: meta.emoji,
+        color: meta.color,
+        role: meta.role,
+        currentTask,
+        isActive,
+        status: row.status ?? 'offline',
+        squad: row.squad ?? null,
+      }
+    })
 
-    return NextResponse.json({ agents });
+    // Fallback: if empty, return all agents as offline
+    if (agents.length === 0) {
+      const fallback = Object.entries(AGENT_META).map(([id, meta]) => ({
+        id,
+        ...meta,
+        currentTask: 'zzZ...',
+        isActive: false,
+        status: 'offline',
+        squad: null,
+      }))
+      return NextResponse.json({ agents: fallback })
+    }
+
+    return NextResponse.json({ agents })
   } catch (error) {
-    console.error("Error getting office data:", error);
-    return NextResponse.json(
-      { error: "Failed to load office data" },
-      { status: 500 }
-    );
+    console.error('Error getting office data:', error)
+    return NextResponse.json({ error: 'Failed to load office data' }, { status: 500 })
   }
 }

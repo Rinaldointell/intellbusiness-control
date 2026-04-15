@@ -18,7 +18,7 @@ async function main() {
   console.log();
 
   try {
-    await collectUsage(DB_PATH);
+    await collectUsage();
     console.log("✅ Usage data collected successfully");
   } catch (error) {
     console.error("❌ Error collecting usage data:", error);

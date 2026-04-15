@@ -1,87 +1,92 @@
 /**
- * Office 3D — Agent Configuration
+ * Office 3D — Agent Configuration INTELLBUSINESS
  *
- * This file defines the visual layout of agents in the 3D office.
- * Names, emojis and roles are loaded at runtime from the OpenClaw API
- * (/api/agents → openclaw.json), so you only need to set positions and colors here.
- *
- * Agent IDs correspond to workspace directory suffixes:
- *   id: "main"     → workspace/          (main agent)
- *   id: "studio"   → workspace-studio/
- *   id: "infra"    → workspace-infra/
- *   etc.
- *
- * Add, remove or reposition agents to match your own OpenClaw setup.
+ * 6 agentes em 2 squads:
+ *   Squad "whatsapp-agents": isabella, sarah-lynn, samantha
+ *   Squad "branding-design": brand-strategist, visual-designer, ux-architect
  */
 
 export interface AgentConfig {
-  id: string;
-  name: string;
-  emoji: string;
-  position: [number, number, number]; // x, y, z
-  color: string;
-  role: string;
+  id: string
+  name: string
+  emoji: string
+  position: [number, number, number] // x, y, z
+  color: string
+  role: string
+  squad: string
 }
 
 export const AGENTS: AgentConfig[] = [
+  // ── Squad: WhatsApp Agents ────────────────────────────────
   {
-    id: "main",
-    name: process.env.NEXT_PUBLIC_AGENT_NAME || "Mission Control",
-    emoji: process.env.NEXT_PUBLIC_AGENT_EMOJI || "🦞",
-    position: [0, 0, 0], // Center — main desk
-    color: "#FFCC00",
-    role: "Main Agent",
+    id: 'isabella',
+    name: 'Isabella',
+    emoji: '💬',
+    position: [-5, 0, -3],
+    color: '#7c3aed',
+    role: 'Agente WhatsApp',
+    squad: 'whatsapp-agents',
   },
   {
-    id: "agent-2",
-    name: "Agent 2",
-    emoji: "🤖",
-    position: [-4, 0, -3],
-    color: "#4CAF50",
-    role: "Sub-agent",
+    id: 'sarah-lynn',
+    name: 'Sarah Lynn',
+    emoji: '🤝',
+    position: [0, 0, -3],
+    color: '#a855f7',
+    role: 'Atendimento',
+    squad: 'whatsapp-agents',
   },
   {
-    id: "agent-3",
-    name: "Agent 3",
-    emoji: "🤖",
-    position: [4, 0, -3],
-    color: "#E91E63",
-    role: "Sub-agent",
+    id: 'samantha',
+    name: 'Samantha',
+    emoji: '📋',
+    position: [5, 0, -3],
+    color: '#c084fc',
+    role: 'Coordenadora',
+    squad: 'whatsapp-agents',
   },
-  {
-    id: "agent-4",
-    name: "Agent 4",
-    emoji: "🤖",
-    position: [-4, 0, 3],
-    color: "#0077B5",
-    role: "Sub-agent",
-  },
-  {
-    id: "agent-5",
-    name: "Agent 5",
-    emoji: "🤖",
-    position: [4, 0, 3],
-    color: "#9C27B0",
-    role: "Sub-agent",
-  },
-  {
-    id: "agent-6",
-    name: "Agent 6",
-    emoji: "🤖",
-    position: [0, 0, 6],
-    color: "#607D8B",
-    role: "Sub-agent",
-  },
-];
 
-export type AgentStatus = "idle" | "working" | "thinking" | "error";
+  // ── Squad: Branding & Design ──────────────────────────────
+  {
+    id: 'brand-strategist',
+    name: 'Brand Strategist',
+    emoji: '🎯',
+    position: [-5, 0, 3],
+    color: '#f59e0b',
+    role: 'Estratégia de Marca',
+    squad: 'branding-design',
+  },
+  {
+    id: 'visual-designer',
+    name: 'Visual Designer',
+    emoji: '🎨',
+    position: [0, 0, 3],
+    color: '#10b981',
+    role: 'Design Visual',
+    squad: 'branding-design',
+  },
+  {
+    id: 'ux-architect',
+    name: 'UX Architect',
+    emoji: '🏗️',
+    position: [5, 0, 3],
+    color: '#3b82f6',
+    role: 'Arquitetura UX',
+    squad: 'branding-design',
+  },
+]
+
+// Legacy statuses kept for 3D component compatibility
+// 'working' = agent is processing, 'thinking' = agent is reasoning, 'error' = error state
+// New Supabase statuses: 'idle', 'busy', 'offline' (mapped to legacy on client side)
+export type AgentStatus = 'idle' | 'busy' | 'offline' | 'working' | 'thinking' | 'error'
 
 export interface AgentState {
-  id: string;
-  status: AgentStatus;
-  currentTask?: string;
-  model?: string; // opus, sonnet, haiku
-  tokensPerHour?: number;
-  tasksInQueue?: number;
-  uptime?: number; // days
+  id: string
+  status: AgentStatus
+  currentTask?: string
+  model?: string
+  tokensPerHour?: number
+  tasksInQueue?: number
+  uptime?: number
 }

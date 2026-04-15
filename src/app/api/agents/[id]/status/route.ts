@@ -1,77 +1,46 @@
-import { NextResponse } from "next/server";
-import { readFileSync, readdirSync, statSync } from "fs";
-import { join } from "path";
+import { NextResponse } from 'next/server'
+import { supabaseServer } from '@/lib/supabase-server'
 
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic'
 
 export async function GET(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params;
+    const { id } = await params
 
-    // Read openclaw config
-    const configPath = (process.env.OPENCLAW_DIR || "/root/.openclaw") + "/openclaw.json";
-    const config = JSON.parse(readFileSync(configPath, "utf-8"));
+    const { data, error } = await supabaseServer
+      .from('agents')
+      .select('*')
+      .eq('id', id)
+      .single()
 
-    // Find agent
-    const agent = config.agents.list.find((a: any) => a.id === id);
-    if (!agent) {
-      return NextResponse.json({ error: "Agent not found" }, { status: 404 });
+    if (error || !data) {
+      return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
     }
 
-    // Get memory files
-    const memoryPath = join(agent.workspace, "memory");
-    let recentFiles: Array<{ date: string; size: number; modified: string }> =
-      [];
-
-    try {
-      const files = readdirSync(memoryPath).filter((f) =>
-        f.match(/^\d{4}-\d{2}-\d{2}\.md$/)
-      );
-      recentFiles = files
-        .map((file) => {
-          const stat = statSync(join(memoryPath, file));
-          return {
-            date: file.replace(".md", ""),
-            size: stat.size,
-            modified: stat.mtime.toISOString(),
-          };
-        })
-        .sort((a, b) => b.date.localeCompare(a.date))
-        .slice(0, 7);
-    } catch (e) {
-      // Memory directory doesn't exist
-    }
-
-    // Get session info (from OpenClaw API if available)
-    // For now, we return mock data
-    const sessions: Array<any> = [];
-
-    // Get telegram account info
-    const telegramAccount = config.channels?.telegram?.accounts?.[id];
+    // Get recent activities for this agent
+    const { data: activities } = await supabaseServer
+      .from('activities')
+      .select('*')
+      .eq('agent', id)
+      .order('timestamp', { ascending: false })
+      .limit(10)
 
     return NextResponse.json({
       agent: {
-        id: agent.id,
-        name: agent.name,
-        model: agent.model?.primary || config.agents.defaults.model.primary,
-        workspace: agent.workspace,
-        dmPolicy: telegramAccount?.dmPolicy,
-        allowAgents: agent.subagents?.allowAgents || [],
-        telegramConfigured: !!telegramAccount?.botToken,
+        id: data.id,
+        status: data.status ?? 'offline',
+        currentTask: data.current_task ?? null,
+        executionsToday: data.executions_today ?? 0,
+        updatedAt: data.updated_at,
+        squad: data.squad ?? null,
       },
-      memory: {
-        recentFiles,
-      },
-      sessions,
-    });
+      recentActivities: activities ?? [],
+    })
   } catch (error) {
-    console.error("Error getting agent status:", error);
-    return NextResponse.json(
-      { error: "Failed to get agent status" },
-      { status: 500 }
-    );
+    console.error('Error getting agent status:', error)
+    return NextResponse.json({ error: 'Failed to get agent status' }, { status: 500 })
   }
 }
