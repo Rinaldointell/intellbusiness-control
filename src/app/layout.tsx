@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Inter, Sora, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -18,11 +18,14 @@ const jetbrainsMono = JetBrains_Mono({
   variable: "--font-jetbrains",
 });
 
+export const viewport: Viewport = {
+  themeColor: "#1a1a2e",
+};
+
 export const metadata: Metadata = {
   title: "Mission Control - OpenClaw",
   description: "Your OpenClaw agent dashboard",
   manifest: "/manifest.json",
-  themeColor: "#1a1a2e",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
